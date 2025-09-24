@@ -1,0 +1,261 @@
+---
+title: "Investigate irS and talc"
+author: "Christelle Colin-Leitzinger"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: false
+    theme: united
+    highlight: pygments
+    df_print: paged
+    code_folding: hide
+editor_options:
+  chunk_output_type: console
+---
+
+<style type= "text/css">
+
+. figure {
+   margin-top: 25px;
+   margin-bottom: 100px;
+}
+
+table {
+    margin-top: 10px;
+    margin-bottom: 25px;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE,
+                      cache = FALSE,
+                      fig.align='center'
+                      )
+```
+
+```{r library}
+library(here)
+library(tidyverse)
+library(gtsummary)
+library(labelled)
+library(survival)
+library(survminer)
+theme_set(theme_classic())
+theme_gtsummary_compact()
+```
+
+```{r load}
+clock_data <-
+  read_rds(paste0(here(), 
+                  "/data/processed data",
+                  "/clock_data.rds")) %>% 
+  mutate(diagyear_cat = case_when(
+    diagyear < 2000            ~ "<2000",
+    diagyear >= 2000 &
+      diagyear < 2005          ~ "2000-2004",
+    diagyear >= 2005 &
+      diagyear < 2010          ~ "2005-2009",
+    diagyear >= 2010           ~ "≥2010"
+  ), diagyear_cat = factor(diagyear_cat, levels = c("<2000", "2000-2004",
+                                                    "2005-2009", "≥2010")))
+```
+
+
+# irS
+Red line depict the median
+```{r}
+clock_data %>% 
+  ggplot(aes(x = irS, fill=..count..))+
+  geom_histogram()+
+  scale_fill_viridis_c(
+  alpha = 1,
+  begin = 0,
+  end = 1,
+  direction = 1,
+  option = "D",
+  values = NULL,
+  space = "Lab",
+  na.value = "grey50",
+  guide = "colourbar",
+  aesthetics = "fill")+
+  geom_vline(aes(xintercept = median(irS, na.rm = TRUE), color = "red"))+
+  labs(x="irS", y="Number of Patient")
+```
+
+
+# irS and talc use
+```{r}
+clock_data %>% 
+  select(irS, tert_irS, talcever) %>% 
+  tbl_summary(by = talcever,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "Talc ever")
+
+clock_data %>% 
+  select(irS, tert_irS, talcnongen) %>% 
+  tbl_summary(by = talcnongen,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "Talc non genital use")
+
+clock_data %>% 
+  select(irS, tert_irS, talcgen) %>% 
+  tbl_summary(by = talcgen,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "Talc genital use")
+```
+
+# irS and talc partner use
+```{r}
+clock_data %>% 
+  select(irS, tert_irS, talcpartner) %>% 
+  tbl_summary(by = talcpartner,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "Talc partner use")
+```
+
+# irS and occupational talc use
+```{r}
+clock_data %>% 
+  select(irS, tert_irS, talc_occ) %>% 
+  tbl_summary(by = talc_occ,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "Occupational talc use")
+```
+
+# irS and talc duration and frequency
+I didn't make duration and frequency categories yet so I switched the columns/row in these tables.
+```{r}
+clock_data %>% 
+  select(tert_irS, talcnongendur) %>% 
+  tbl_summary(by = tert_irS,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "tert_irS")
+
+clock_data %>% 
+  select(tert_irS, talcnongenfreq) %>% 
+  tbl_summary(by = tert_irS,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "tert_irS")
+
+clock_data %>% 
+  select(tert_irS, talcgendur) %>% 
+  tbl_summary(by = tert_irS,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "tert_irS")
+
+clock_data %>% 
+  select(tert_irS, talcgenfreq) %>% 
+  tbl_summary(by = tert_irS,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "tert_irS")
+```
+
+# By powder use analysis
+## by “ever application of body powder to non genital areas”
+```{r}
+clock_data %>% 
+  select(refage, 
+         refage_cat, diagyear_cat,
+         stage_cat, 
+         neoadj_treat,
+         talcnongen) %>% 
+  tbl_summary(by = talcnongen,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "Talc non genital use")
+```
+
+## by “ever application of body powder to genital areas”
+```{r}
+clock_data %>% 
+  select(refage, 
+         refage_cat, diagyear_cat,
+         stage_cat, 
+         neoadj_treat,
+         talcgen) %>% 
+  tbl_summary(by = talcgen,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "Talc genital use")
+```
+
+## by partner talc use
+```{r}
+clock_data %>% 
+  select(refage, 
+         refage_cat, diagyear_cat,
+         stage_cat, 
+         neoadj_treat,
+         talcpartner) %>% 
+  tbl_summary(by = talcpartner,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "Talc partner use")
+```
+
+## by occupational talc use
+```{r}
+clock_data %>% 
+  select(refage, 
+         refage_cat, diagyear_cat,
+         stage_cat, 
+         neoadj_treat,
+         talc_occ) %>% 
+  tbl_summary(by = talc_occ,
+              type = list(all_dichotomous() ~ "categorical")#,
+              ) %>%
+  bold_labels() %>%
+  add_p() %>% bold_p(t=0.05) %>% add_overall() %>%
+  # add_stat_label() %>% 
+  modify_spanning_header(everything() ~ "Occupational talc use")
+```
+
