@@ -1,0 +1,355 @@
+---
+title: "Body powder/talc exposure and tumor DNAm profiles"
+author: "Christelle Colin-Leitzinger"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: false
+    theme: united
+    highlight: pygments
+    df_print: paged
+    code_folding: hide
+editor_options:
+  chunk_output_type: console
+---
+
+<style type= "text/css">
+
+. figure {
+   margin-top: 25px;
+   margin-bottom: 100px;
+}
+
+table {
+    margin-top: 10px;
+    margin-bottom: 25px;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE,
+                      cache = FALSE,
+                      fig.align='center'
+                      )
+```
+
+```{r library}
+library(here)
+library(tidyverse)
+library(gtsummary)
+library(labelled)
+library(plotly)
+library(minfi)
+library(DMRcate)
+library(ComplexHeatmap)
+theme_set(theme_classic())
+theme_gtsummary_compact()
+```
+
+```{r load}
+clock_data <-
+  read_rds(paste0(here(), 
+                  "/data/processed data",
+                  "/clock_data.rds")) %>% 
+  mutate(diagyear_cat = case_when(
+    diagyear < 2000            ~ "<2000",
+    diagyear >= 2000 &
+      diagyear < 2005          ~ "2000-2004",
+    diagyear >= 2005 &
+      diagyear < 2010          ~ "2005-2009",
+    diagyear >= 2010           ~ "≥2010"
+  ), diagyear_cat = factor(diagyear_cat, levels = c("<2000", "2000-2004",
+                                                    "2005-2009", "≥2010")))
+
+load(paste0(here::here(), 
+            "/data/raw data",
+            "/cleaned_07082022.rda"))
+```
+
+
+# DNA data exploration
+The original clean (filtered and normalized) data contains `r nrow(betas_clean6)` CpGs information on `r ncol(betas_clean6)` patients.
+This is a quick view.
+```{r}
+betas_clean6[,1:3] %>% head()
+```
+
+## Missingness
+Some patients has higher level of missingness.
+```{r}
+skimr::skim(betas_clean6)
+```
+
+Patients % missing in final data
+```{r}
+map_df <- betas_clean6 %>% as_tibble(rownames = "cpgs_id")
+map_df1 <- map_df %>%
+  column_to_rownames("cpgs_id")
+# map_df1 %>% summarise_all(list(name = ~sum(is.na(.))/length(.)))
+
+a <- map_df1 %>% summarise_all(list(name = ~sum(is.na(.))/length(.) * 100
+                                    )
+                               )
+plot <- a %>% #select(-Index_name) %>% 
+  pivot_longer(everything(),
+               values_to = "Percent missing") %>% 
+  mutate(text = paste("Patient: ", name, "\nPercent missing: ", round(`Percent missing`, 1), sep="")) %>% 
+  ggplot(aes(x= name, y= `Percent missing`, color= name, text=text))+
+  geom_point()+
+  geom_segment(aes(xend= name, yend= 0))+
+  theme(legend.position = "none", 
+        axis.text.x = element_blank(),
+        axis.title.x = element_blank())
+
+plot <- ggplotly(plot, tooltip="text")
+plot
+```
+Missingness rate for the overall data is `r round(mean(is.na(map_df1)) * 100, 1)`%
+             
+## Outliers
+```{r}
+beta = map_df1
+qq = apply(beta, 2, function(x) quantile(x, probs = c(0.25, 
+                                                      0.5, 0.75), na.rm = TRUE))
+q2575 <- apply(qq, 1, function(x) quantile(x, probs = c(0.25, 
+                                                        0.75), na.rm = TRUE))
+qr <- q2575["75%", ] - q2575["25%", ]
+up = q2575["75%", ] + 3 * qr
+low = q2575["25%", ] - 3 * qr
+flag = qq > up | qq < low
+flag = apply(flag, 2, sum) > 0
+```
+`r sum(flag)` samples are outliers in beta value distribution
+
+```{r}
+# cat(sum(flag), " samples are outliers in beta value distribution", 
+#     "\n")
+
+outliers <- names(flag[flag %in% c("TRUE")])
+rm(beta, q2575, qq, flag, low, qr, up)
+```
+The outliers are `r paste(outliers, collapse = " and ")`.   
+the outliers DNA methylation distribution are depicted in black in the density plot below
+
+```{r}
+plot <-
+  map_df %>% 
+  pivot_longer(cols = -cpgs_id) %>% 
+  ggplot(aes(x= value, color= name))+
+  geom_density(linetype = 2)+
+  # geom_density(data = a, aes(x= value, linetype = name), color = "black")+
+  geom_density(data = map_df %>% select(value = all_of(outliers[1])), aes(x= value), color = "black")+
+  geom_density(data = map_df %>% select(value = all_of(outliers[2])), aes(x= value), color = "black")+
+  xlim(0,1)+
+  theme(legend.position = "none")
+plot
+```
+
+The outliers are depicted in green below. In orange are 4 examples of non-outliers distributions.
+```{r}
+a <- map_df %>% select(colnames(map_df)[2:5], all_of(outliers)) %>% as.matrix()
+densityBeanPlot(a, sampGroups = c("included", "included", "included", "included", "excluded", "excluded"))
+```
+
+```{r heatmap annot, fig.height=12, fig.width=12, echo = FALSE}
+# annot_L1_beta_results <- annot_L1_beta_results %>% as_tibble() %>%
+#   cbind(Index = remp_res_L1@rowRanges@elementMetadata$RE.Index, .)
+# map_df <- annot_L1_beta_results[1:200,]
+# 
+# map_df1 <- map_df %>%
+#   column_to_rownames("Index")
+# a <- map_df[1:1000,]
+# df_map1 <- t(scale(t(as.matrix(a)))) # scale for standardizing the data to make variables comparable
+# # column_ho = HeatmapAnnotation(is_lipids = c(map_df$is_lipids),
+# #                               col = list(is_lipids = c("Yes" = "#932667FF", "No" = "grey")),
+# #     na_col = "black")
+# Heatmap(df_map1, name = " ",
+#         na_col = "black"
+#         # cluster_rows = FALSE,
+#         # cluster_columns = FALSE#,
+#         # top_annotation = column_ho
+#         )
+```
+
+
+```{r}
+# phenoclean <- phenoclean %>% 
+#   mutate(Batch = case_when(
+#     Batch == "Peres"      ~ "Batch 1",
+#     Batch == "Peres2"     ~ "Batch 2",
+#     Batch == "Doherty"    ~ "Batch 3",
+#   ))
+# batch_col <- phenoclean$Batch
+# 
+# betas_clean6[1:10, 1:5]
+# beta <- betas_clean6[1:10, 1:5]
+# 
+# plotMDS(getM(mSetSq), top=1000, gene.selection="common",
+#         col=pal[factor(targets$Sample_Group)])
+# legend("top", legend=levels(factor(targets$Sample_Group)), text.col=pal,
+#        bg="white", cex=0.7)
+# 
+# pal <- brewer.pal(3,"Dark2")
+# par(mar = c(5.1, 11.1, 4.1, 2.1))
+# 
+# mdsPlot(beta, numPositions = 1000, 
+#         main = "", 
+#         sampGroups = batch_col, 
+#         pch = 1,
+#         pal = c(pal), 
+#         # xlim = c(-8, 8),
+#         # ylim = c(-7, 9),
+#         legendPos = "topright", 
+#         legendNCol = 1)
+# title(xlab = "Dimension 1", ylab = "Dimension 2", 
+#       main = "Additional file", 
+#       outer = FALSE)
+```
+
+
+
+
+# DNA methylation analysis
+```{r}
+missing_talc_info_id <- clock_data %>% filter(is.na(talcever)) %>% select(Complete.Barcode)
+missing_talc_info_id <- missing_talc_info_id$Complete.Barcode
+
+betas_clean6 <- betas_clean6[, !colnames(betas_clean6) %in% c(missing_talc_info_id)]
+```
+
+## Probe-wise differential methylation analysis
+
+The biological question of interest for this particular dataset is to discover differentially methylated probes between patients.
+
+
+```{r dmps, cache=TRUE}
+# # this is the factor of interest
+variable <- factor(clock_data$talcever)
+# cellType <- factor(targets$Sample_Group)# NOT RUN____
+# # this is the individual effect that we need to account for
+# individual <- factor(targets$Sample_Source)
+
+# use the above to create a design matrix
+design <- model.matrix(~1+talcever, data = clock_data)
+colnames(design) <- c(levels(variable)) # Used to be c(levels(cellType),levels(individual)[-1]) # I am not sure i should have the -1 or not
+
+# fit the linear model
+fit <- lmFit(betas_clean6, design)
+write_rds(fit, "fit.rds")
+fit <- read_rds("fit.rds")
+# # create a contrast matrix for specific comparisons # NOT RUN____
+# contMatrix <- makeContrasts(naive-rTreg,
+#                            naive-act_naive,
+#                            rTreg-act_rTreg,
+#                            act_naive-act_rTreg,
+#                            levels=design)
+# contMatrix
+# 
+# # fit the contrasts
+# fit2 <- contrasts.fit(fit, contMatrix)
+fit2 <- eBayes(fit)# eBayes(fit2)
+
+# look at the numbers of DM CpGs at FDR < 0.05
+summary(decideTests(fit2))
+```
+
+We can extract the tables of differentially expressed CpGs for each comparison, ordered by B-statistic by default, using the `topTable` function in *limma*. The B-statistic is the log-odds of differential methylation, first published by Lonnstedt and Speed [@lonnstedt2002replicated].  To order by p-value, the user can specify `sort.by="p"`; and in most cases, the ordering based on the p-value and ordering based on the B-statistic will be identical.The results of the analysis for the first comparison, `naive` vs. `rTreg`, can be saved as a `data.frame` by setting `coef=1`. The `coef` parameter explicitly refers to the column in the contrasts matrix which corresponds to the comparison of interest.
+
+```{r annotatedmps, cache=TRUE}
+# ann450k = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19) # Switch to Epic 38
+# head(ann450k, 2)
+
+ann_epic = getAnnotation(IlluminaHumanMethylationEPICv2anno.20a1.hg38)
+head(ann_epic, 2)
+
+# get the table of results for the first contrast (naive - rTreg)
+# ann450kSub <- ann450k[match(rownames(mVals),ann450k$Name), # original code
+#                          c(1:4,12:19,24:ncol(ann450k))]
+ann450kSub <- ann450k[match(rownames(mVals),ann450k$Name), # modified code to help debug # remove when debugged
+                         c(1:4,12:19,24:ncol(ann450k))]
+ann_epicSub <- ann_epic[match(rownames(betas_clean6),ann_epic$Name), # Need debug----------------------------------
+                      c(1:4,12:19,24:ncol(ann_epic))]
+DMPs <- topTable(fit2, num=Inf, coef=1, genelist=ann_epicSub)
+head(DMPs)
+```
+
+The resulting `data.frame` can easily be written to a CSV file, which can be opened in Excel.
+
+```{r write, eval=FALSE}
+write.table(DMPs, file="DMPs.csv", sep=",", row.names=FALSE)
+```
+
+It is always useful to plot sample-wise methylation levels for the top differentially methylated CpG sites to quickly ensure the results make sense (Figure \ref{fig:figure9}). If the plots do not look as expected, it is usually an indication of an error in the code, or in setting up the design matrix. It is easier to interpret methylation levels on the beta value scale, so although the analysis is performed on the M-value scale, we visualise data on the beta value scale. The `plotCpg` function in *minfi* is a convenient way to plot the sample-wise beta values stratified by the grouping variable.
+
+```{r figure9, fig.width=10, fig.height=10, fig.cap="\\label{fig:figure9}Plotting the top few differentially methylated CpGs is a good way to check whether the results make sense."}
+# plot the top 4 most significantly differentially methylated CpGs
+par(mfrow=c(2,2))
+sapply(rownames(DMPs)[1:4], function(cpg){
+  plotCpg(bVals, cpg=cpg, pheno=targets$Sample_Group, ylab = "Beta values")
+})
+```
+
+## Differential methylation analysis of regions
+
+Although performing a *probe-wise* analysis is useful and informative, sometimes we are interested in knowing whether several proximal CpGs are concordantly differentially methylated, that is, we want to identify differentially methylated *regions*. There are several Bioconductor packages that have functions for identifying differentially methylated regions from 450k data. Some of the most popular are the `dmrFind` function in the [charm](http://www.bioconductor.org/packages/release/bioc/html/charm.html) package, which has been somewhat superseded for 450k arrays by the `bumphunter` function in [minfi](http://bioconductor.org/packages/release/bioc/html/minfi.html)[@Jaffe2012; @Aryee2014], and, the recently published `dmrcate` in the [DMRcate](https://www.bioconductor.org/packages/release/bioc/html/DMRcate.html) package [@Peters2015]. They are each based on different statistical methods. In our experience, the `bumphunter` and `dmrFind` functions can be somewhat slow to run unless you have the computer infrastructure to parallelise them, as they use permutations to assign significance. In this workflow, we will perform an analysis using the `dmrcate`. As it is based on *limma*, we can directly use the `design` and `contMatrix` we previously defined.
+
+Firstly, our matrix of M-values is annotated with the relevant information about the probes such as their genomic position, gene annotation, etc. By default, this is done using the `ilmn12.hg19` annotation, but this can be substituted for any argument compatible with the interface provided by the *minfi* package. The *limma* pipeline is then used for differential methylation analysis to calculate moderated t-statistics.
+
+```{r cpgannotate, cache=TRUE}
+myAnnotation <- cpg.annotate(object = mVals, datatype = "array", what = "M",
+                             analysis.type = "differential", design = design,
+                             contrasts = TRUE, cont.matrix = contMatrix,
+                             coef = "naive - rTreg", arraytype = "450K")
+str(myAnnotation)
+```
+
+Once we have the relevant statistics for the individual CpGs, we can then use the `dmrcate` function to combine them to identify differentially methylated regions. The main output table `DMRs$results` contains all of the regions found, along with their genomic annotations and p-values.
+
+```{r dmrcate, cache=TRUE, message=FALSE}
+DMRs <- dmrcate(myAnnotation, lambda=1000, C=2)
+head(DMRs$results)
+```
+
+As for the probe-wise analysis, it is advisable to visualise the results to ensure that they make sense. The regions can easily be viewed using the `DMR.plot` function provided in the *DMRcate* package (Figure \ref{fig:figure10}).
+```{r resultsranges, cache=TRUE}
+# convert the regions to annotated genomic ranges
+data(dmrcatedata)
+results.ranges <- extractRanges(DMRs, genome = "hg19")
+
+# set up the grouping variables and colours
+groups <- pal[1:length(unique(targets$Sample_Group))]
+names(groups) <- levels(factor(targets$Sample_Group))
+cols <- groups[as.character(factor(targets$Sample_Group))]
+samps <- 1:nrow(targets)
+```
+
+```{r figure10, fig.width=10, fig.height=10, fig.cap="\\label{fig:figure10}The DMRcate \"DMR.plot\" function allows you to quickly visualise DMRs in their genomic context. By default, the plot shows the location of the DMR in the genome, the position of any genes that are nearby, the base pair positions of the CpG probes, the methylation levels of the individual samples as a heatmap and the mean methylation levels for the various sample groups in the experiment. This plot shows the top ranked DMR identified by the DMRcate analysis."}
+# draw the plot for the top DMR
+par(mfrow=c(1,1))
+DMR.plot(ranges=results.ranges, dmr=1, CpGs=bVals, phen.col=cols, what = "Beta",
+         arraytype = "450K", pch=16, toscale=TRUE, plotmedians=TRUE,
+         genome="hg19", samps=samps)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
